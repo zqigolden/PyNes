@@ -34,7 +34,7 @@ def main(DEBUG:bool=False):
             exit()
         bus.clock()
         if DEBUG and c % 30 == 0:
-            #input('paused')
+            input('paused')
             pass
         c += 1
 typer.run(main)

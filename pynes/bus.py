@@ -43,16 +43,18 @@ class Bus(Device):
         addr = u16(addr)
         data = self.cartridge.read(addr)
         if data is not False:
+            loguru.logger.debug('0x{:02x} read from cartridge at 0x{:04x}', data, addr)
             pass
         elif 0x0000 <= addr <= 0x1FFF:
             data = self.cpuRam[addr & 0x07FF]
+            loguru.logger.debug('0x{:02x} read from cpuRam at 0x{:04x}', data, addr)
         elif 0x2000 <= addr <= 0x3FFF:
             data = self.ppu.read(addr & 0x0007)
+            loguru.logger.debug('0x{:02x} read from ppu at 0x{:04x}', data, addr)
         elif 0x4016 <= addr <= 0x4017:
             data = int((self.controller_state[addr & 0x0001] & 0x80) > 0)
+            loguru.logger.debug('0x{:02x} read from controller at 0x{:04x}', data, addr)
             self.controller_state[addr & 0x0001] <<= 1
-        #loguru.logger.debug('0x{:02x} read from cart at 0x{:04x}', data, addr)
-        #loguru.logger.debug('0x{:02x} read from {} at 0x{:04x}', data, device[1].name, addr)
         assert_u8(data)
         return data
 

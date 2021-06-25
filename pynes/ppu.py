@@ -130,6 +130,7 @@ class PPU(Device):
         self.tblName = mtx(0, (2, 1024))
         self.tblPattern = mtx(0, (2, 4096))
         self.tblPalette = mtx(size=32)
+        self.tblPalette = list(range(32))
 
         self.palScreen = palScreen
         self.sprScreen = mtx(0, (256, 240, 3))
@@ -160,7 +161,6 @@ class PPU(Device):
 
     def read(self, addr: t16) -> t8:
         assert_u16(addr)
-        addr = addr & 0x0007
         data = 0x0
         if addr == 0x0002:
             data = (self.status & 0xE0) | (self.ppu_data_buffer & 0x1F)
@@ -394,16 +394,14 @@ class PPU(Device):
             bg_pal0 = (self.bg_shifter_attrib_lo & bit_mux) > 0
             bg_pal1 = (self.bg_shifter_attrib_hi & bit_mux) > 0
             bg_palette = (bg_pal1 << 1) | bg_pal0
-        #self.engine.set_pixel(self.cycle - 1, self.scanline, self.GetColourFromPaletteRam(bg_palette, bg_pixel))
+        self.engine.set_pixel(self.cycle - 1, self.scanline, self.GetColourFromPaletteRam(bg_palette, bg_pixel))
 
         self.cycle += 1
         if self.cycle >= 341:
             self.cycle = 0
             self.scanline += 1
-            if self.scanline % 50 == 0:
-                #self.engine.update()
-                pass
             if self.scanline >= 261:
+                self.engine.update()
                 self.scanline = -1
                 self.frame_complete = True
 

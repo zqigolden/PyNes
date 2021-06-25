@@ -659,7 +659,7 @@ class CPU(Device):
             if self.debug:
                 pass
                 logger.debug(f"Ins: {self.lookup[self.optcode][OPERATE]} {self.lookup[self.optcode][ADDRESS_MODE]}")
-                #logger.debug(self)
+                logger.debug(self)
             self.cycles += add_cycle1 & add_cycle2
             self.setFlag('U', True)
         self.clock_count += 1
