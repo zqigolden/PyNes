@@ -14,11 +14,17 @@ def mtx(init_val:int=0, size:Tuple[int]=(1,)) -> List:
     return [mtx(init_val, size[1:]) for _ in range(size[0])]
 
 def assert_u16(d:int)->None:
-    return
+    # return
     assert 0x0000 <= d <= 0xffff
 def assert_u8(d:int)->None:
-    return
+    # return
     assert 0x00 <= d <= 0xff
+
+def flipbyte(b):
+    b = (b & 0xF0) >> 4 | (b & 0x0F) << 4
+    b = (b & 0xCC) >> 2 | (b & 0x33) << 2
+    b = (b & 0xAA) >> 1 | (b & 0x55) << 1
+    return b
 
 u16 = uint16
 u8 = uint8

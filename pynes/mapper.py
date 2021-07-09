@@ -18,6 +18,8 @@ class Mapper(Device):
         raise NotImplementedError
     def ppuMapWrite(self, addr:t16, value:t8) -> Tuple[t16, bool]:
         raise NotImplementedError
+    def scanline(self) -> None:
+        return
 
 class Mapper000(Mapper):
     def __init__(self, prgBanks, chrBanks, name: str = None) -> None:

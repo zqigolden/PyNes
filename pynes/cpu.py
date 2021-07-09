@@ -49,7 +49,7 @@ class CPU(Device):
         self.a = uint8()
         self.x = uint8()
         self.y = uint8()
-        self.stkp = uint16()
+        self.stkp = uint8()
         self.pc = uint16()
         self.status = uint8()
 
@@ -60,15 +60,15 @@ class CPU(Device):
         self.addr_rel = uint16()
         self.optcode = uint8()
         self.cycles = 0
-        self.clock_count = 0
+        self.clock_count = 1
 
-        self.bus = None
         self.read = None
         self.write = None
         cvt_type = lambda x:tuple(i if p != 3 else int(i) for p, i in enumerate(x))
         self.lookup = [cvt_type(i.split(',')) for i in lookup.split()]
 
         self.debug = debug
+        self.bus = None
 
     def connect_bus(self, bus) -> None:
         self.bus = bus
@@ -76,15 +76,15 @@ class CPU(Device):
         self.write = self.bus.write
 
     def reset(self) -> None:
-        addr_abs = uint16(0xFFFC)
+        addr_abs = 0xFFFC
         lo = self.read(addr_abs)
         hi = self.read(addr_abs + 1)
         self.pc = u16(hi << 8 | lo)
         self.a = uint8()
         self.x = uint8()
         self.y = uint8()
-        self.stkp = uint16(0xFD)
-        self.status = uint16() | FLAGS6502.U
+        self.stkp = 0xFD
+        self.status = FLAGS6502.U
         self.addr_rel = uint16()
         self.addr_abs = uint16()
         self.fetched = uint8()
@@ -105,88 +105,88 @@ class CPU(Device):
 
     # addressing Modes
     def IMP(self) -> int:
-        self.fetched = u8(self.a)
+        self.fetched = self.a
         return 0
 
     def IMM(self) -> int:
-        self.addr_abs = uint16(self.pc)
-        self.pc += 1
+        self.addr_abs = self.pc
+        self.pc = u16(self.pc + 1)
         return 0
 
     def ZP0(self) -> int:
-        self.addr_abs = uint16(self.read(self.pc))
-        self.pc += 1
+        self.addr_abs = self.read(self.pc)
+        self.pc = u16(self.pc + 1)
         return 0
 
     def ZPX(self) -> int:
-        self.addr_abs = uint16(self.read(self.pc) + self.x)
-        self.pc += 1
+        self.addr_abs = u8(self.read(self.pc) + self.x)
+        self.pc = u16(self.pc + 1)
         return 0
 
     def ZPY(self) -> int:
-        self.addr_abs = uint16(self.read(self.pc) + self.y)
-        self.pc += 1
+        self.addr_abs = u8(self.read(self.pc) + self.y)
+        self.pc = u16(self.pc + 1)
         return 0
 
     def REL(self) -> int:
         self.addr_rel = self.read(self.pc)
-        self.pc += 1
+        self.pc = u16(self.pc + 1)
         if self.addr_rel & 0x80:
             self.addr_rel |= 0xFF00
         return 0
 
     def ABS(self) -> int:
         lo = self.read(self.pc)
-        self.pc += 1
+        self.pc = u16(self.pc + 1)
         hi = self.read(self.pc)
-        self.addr_abs = uint16(hi << 8 | lo)
-        self.pc += 1
+        self.pc = u16(self.pc + 1)
+        self.addr_abs = (hi << 8) | lo
         return 0
 
     def ABX(self) -> int:
         self.ABS()
-        hi = self.addr_abs & 0xFF
+        hi = self.addr_abs & 0xFF00
         self.addr_abs += self.x
-        if self.addr_abs & 0xFF != hi:
+        if self.addr_abs & 0xFF00 != hi:
             return 1
         return 0
 
     def ABY(self) -> int:
         self.ABS()
-        hi = self.addr_abs & 0xFF
+        hi = self.addr_abs & 0xFF00
         self.addr_abs += self.y
-        if self.addr_abs & 0xFF != hi:
+        if self.addr_abs & 0xFF00 != hi:
             return 1
         return 0
 
     def IND(self) -> int:
         lo = self.read(self.pc)
-        self.pc += 1
-        hi = self.read(self.pc + 1)
-        self.pc += 1
+        self.pc = u16(self.pc + 1)
+        hi = self.read(self.pc)
+        self.pc = u16(self.pc + 1)
         ptr = u16(hi << 8 | lo)
         if lo == 0xff:
-            self.addr_abs = u16(self.read(ptr & 0xff00) << 8) | self.read(ptr + 0)
+            self.addr_abs = (self.read(ptr & 0xff00) << 8) | self.read(ptr)
         else:
-            self.addr_abs = u16(self.read(ptr + 1) << 8) | self.read(ptr + 0)
+            self.addr_abs = (self.read(ptr + 1) << 8) | self.read(ptr)
         return 0
 
     def IZX(self) -> int:
-        t = u16(self.read(self.pc))
-        self.pc += 1
+        t = self.read(self.pc)
+        self.pc = u16(self.pc + 1)
         lo = self.read((t + self.x) & 0x00FF)
         hi = self.read((t + self.x + 1) & 0x00FF)
-        self.addr_abs = u16(hi << 8) | lo
+        self.addr_abs = (hi << 8) | lo
         return 0
 
     def IZY(self) -> int:
-        t = u16(self.read(self.pc))
-        self.pc += 1
+        t = self.read(self.pc)
+        self.pc = u16(self.pc + 1)
         lo = self.read(t & 0x00FF)
         hi = self.read((t + 1) & 0x00FF)
-        self.addr_abs = u16(hi << 8) | lo
+        self.addr_abs = (hi << 8) | lo
         self.addr_abs += self.y
-        if self.addr_abs & 0xff00 != u16(hi << 8):
+        if self.addr_abs & 0xff00 != (hi << 8):
             return 1
         return 0
 
@@ -197,11 +197,11 @@ class CPU(Device):
 
     def ADC(self) -> int:
         self.fetch()
-        self.temp = u16(self.a) + self.fetched + self.getFlag('C')
+        self.temp = u16(self.a + self.fetched + self.getFlag('C'))
         self.setFlag('C', self.temp > 255)
         self.setFlag('Z', self.temp & 0x00FF == 0)
-        self.setFlag('V', (~(u16(self.a) ^ self.fetched) &
-                    (u16(self.a) ^ self.temp)) & 0x0080)
+        self.setFlag('V', (~(self.a ^ self.fetched) &
+                    (self.a ^ self.temp)) & 0x0080)
         self.setFlag('N', self.temp & 0x80)
         self.a = u8(self.temp)
         return 1
@@ -212,8 +212,8 @@ class CPU(Device):
         self.temp = u16(self.a) + val + self.getFlag('C')
         self.setFlag('C', self.temp > 255)
         self.setFlag('Z', self.temp & 0x00FF == 0)
-        self.setFlag('V', (~(u16(self.a) ^ self.fetched) &
-                    (u16(self.a) ^ self.temp)) & 0x0080)
+        self.setFlag('V', (~(self.a ^ self.fetched) &
+                    (self.a ^ self.temp)) & 0x0080)
         self.setFlag('N', self.temp & 0x80)
         self.a = u8(self.temp)
         return 1
@@ -227,7 +227,7 @@ class CPU(Device):
 
     def ASL(self) -> int:
         self.fetch()
-        self.temp = u16(self.fetched) << 1
+        self.temp = u16(self.fetched << 1)
         self.setFlag('C', self.temp & 0xFF00 > 0)
         self.setFlag('Z', self.temp & 0x00FF == 0x00)
         self.setFlag('N', self.temp & 0x80)
@@ -247,7 +247,7 @@ class CPU(Device):
             self.addr_abs = u16(self.pc + self.addr_rel)
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
                 self.cycles += 1
-            self.pc[:] = self.addr_abs
+            self.pc = self.addr_abs
         return 0
 
     def BCS(self) -> int:
@@ -256,7 +256,7 @@ class CPU(Device):
             self.addr_abs = u16(self.pc + self.addr_rel)
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
                 self.cycles += 1
-            self.pc[:] = self.addr_abs
+            self.pc = self.addr_abs
         return 0
 
     def BEQ(self) -> int:
@@ -265,7 +265,7 @@ class CPU(Device):
             self.addr_abs = u16(self.pc + self.addr_rel)
             if (self.addr_abs & 0xFF00) != (self.pc & 0xFF00):
                 self.cycles += 1
-            self.pc[:] = self.addr_abs
+            self.pc = self.addr_abs
         return 0
 
     def BIT(self) -> int:
@@ -304,17 +304,17 @@ class CPU(Device):
         return 0
 
     def BRK(self) -> int:
-        self.pc += 1
+        self.pc = u16(self.pc + 1)
         self.setFlag("I", 1)
         self.write(0x0100 + self.stkp, (self.pc >> 8) & 0x00FF)
-        self.stkp -= 1
+        self.stkp = u8(self.stkp - 1)
         self.write(0x0100 + self.stkp, self.pc & 0x00FF)
-        self.stkp -= 1
+        self.stkp = u8(self.stkp - 1)
         self.setFlag("B", 1)
         self.write(0x0100 + self.stkp, self.status)
-        self.stkp -= 1
+        self.stkp = u8(self.stkp - 1)
         self.setFlag("B", 0)
-        self.pc = u16(self.read(0xFFFE)) | (u16(self.read(0xFFFF)) << 8)
+        self.pc = self.read(0xFFFE) | (self.read(0xFFFF) << 8)
         return 0
 
     def BVC(self) -> int:
@@ -344,16 +344,16 @@ class CPU(Device):
         return 0
 
     def CLI(self) -> int:
-        self.setFlag("I", False)
+        self.setFlag('I', False)
         return 0
 
     def CLV(self) -> int:
-        self.setFlag("V", False)
+        self.setFlag('V', False)
         return 0
 
     def CMP(self) -> int:
         self.fetch()
-        self.temp = u16(self.a) - u16(self.fetched)
+        self.temp = u16(self.a - self.fetched)
         self.setFlag("C", self.a >= self.fetched)
         self.setFlag("Z", (self.temp & 0x00FF) == 0x0000)
         self.setFlag("N", self.temp & 0x0080)
@@ -361,7 +361,7 @@ class CPU(Device):
 
     def CPX(self) -> int:
         self.fetch()
-        self.temp = u16(self.x) - u16(self.fetched)
+        self.temp = u16(self.x - self.fetched)
         self.setFlag("C", self.x >= self.fetched)
         self.setFlag("Z", (self.temp & 0x00FF) == 0x0000)
         self.setFlag("N", self.temp & 0x0080)
@@ -369,7 +369,7 @@ class CPU(Device):
 
     def CPY(self) -> int:
         self.fetch()
-        self.temp = u16(self.y) - u16(self.fetched)
+        self.temp = u16(self.y - self.fetched)
         self.setFlag("C", self.y >= self.fetched)
         self.setFlag("Z", (self.temp & 0x00FF) == 0x0000)
         self.setFlag("N", self.temp & 0x0080)
@@ -384,13 +384,13 @@ class CPU(Device):
         return 0
 
     def DEX(self) -> int:
-        self.x -= 1
+        self.x = u8(self.x - 1)
         self.setFlag("Z", self.x == 0x00)
         self.setFlag("N", self.x & 0x80)
         return 0
 
     def DEY(self) -> int:
-        self.y -= 1
+        self.y = u8(self.y - 1)
         self.setFlag("Z", self.y == 0x00)
         self.setFlag("N", self.y & 0x80)
         return 0
@@ -411,13 +411,13 @@ class CPU(Device):
         return 0
 
     def INX(self) -> int:
-        self.x += 1
+        self.x = u8(self.x + 1)
         self.setFlag("Z", self.x == 0x00)
         self.setFlag("N", self.x & 0x80)
         return 0
 
     def INY(self) -> int:
-        self.y += 1
+        self.y = u8(self.y + 1)
         self.setFlag("Z", self.y == 0x00)
         self.setFlag("N", self.y & 0x80)
         return 0
@@ -430,9 +430,9 @@ class CPU(Device):
         self.pc -= 1
 
         self.write(0x0100 + self.stkp, (self.pc >> 8) & 0x00FF)
-        self.stkp -= 1
+        self.stkp = u8(self.stkp - 1)
         self.write(0x0100 + self.stkp, self.pc & 0x00FF)
-        self.stkp -= 1
+        self.stkp = u8(self.stkp - 1)
 
         self.pc = self.addr_abs
         return 0
@@ -471,7 +471,7 @@ class CPU(Device):
         return 0
 
     def NOP(self) -> int:
-        if self.optcode in [0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC, ]:
+        if self.optcode in [0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC]:
             return 1
         return 0
 
@@ -484,32 +484,32 @@ class CPU(Device):
 
     def PHA(self) -> int:
         self.write(0x0100 + self.stkp, self.a)
-        self.stkp -= 1
+        self.stkp = u8(self.stkp - 1)
         return 0
 
     def PHP(self) -> int:
         self.write(0x0100 + self.stkp, self.status | FLAGS6502.B | FLAGS6502.U)
         self.setFlag("B", 0)
         self.setFlag("U", 0)
-        self.stkp -= 1
+        self.stkp = u8(self.stkp - 1)
         return 0
 
     def PLA(self) -> int:
-        self.stkp += 1
+        self.stkp = u8(self.stkp + 1)
         self.a = self.read(0x0100 + self.stkp)
         self.setFlag("Z", self.a == 0x00)
         self.setFlag("N", self.a & 0x80)
         return 0
 
     def PLP(self) -> int:
-        self.stkp += 1
+        self.stkp = u8(self.stkp + 1)
         self.status = self.read(0x0100 + self.stkp)
         self.setFlag("U", 1)
         return 0
 
     def ROL(self) -> int:
         self.fetch()
-        self.temp = u16((self.fetched) << 1) | self.getFlag("C")
+        self.temp = u16(self.fetched << 1) | self.getFlag("C")
         self.setFlag("C", self.temp & 0xFF00)
         self.setFlag("Z", (self.temp & 0x00FF) == 0x0000)
         self.setFlag("N", self.temp & 0x0080)
@@ -521,7 +521,7 @@ class CPU(Device):
 
     def ROR(self) -> int:
         self.fetch()
-        self.temp = u16((self.getFlag("C")) << 7) | (self.fetched >> 1)
+        self.temp = u16(self.getFlag("C") << 7) | (self.fetched >> 1)
         self.setFlag("C", self.fetched & 0x01)
         self.setFlag("Z", (self.temp & 0x00FF) == 0x00)
         self.setFlag("N", self.temp & 0x0080)
@@ -532,22 +532,22 @@ class CPU(Device):
         return 0
 
     def RTI(self) -> int:
-        self.stkp += 1
+        self.stkp = u8(self.stkp + 1)
         self.status = self.read(0x0100 + self.stkp)
-        self.status &= FLAGS6502.B
+        self.status &= ~FLAGS6502.B
         self.status &= ~FLAGS6502.U
-        self.stkp += 1
-        self.pc = u16(self.read(0x0100) + self.stkp)
-        self.stkp += 1
-        self.pc |= u16((self.read(0x0100) + self.stkp) << 8)
+        self.stkp = u8(self.stkp + 1)
+        self.pc = self.read(0x0100 + self.stkp)
+        self.stkp = u8(self.stkp + 1)
+        self.pc |= self.read(0x0100 + self.stkp) << 8
         return 0
 
     def RTS(self) -> int:
-        self.stkp += 1
-        self.pc = u16(self.read(0x0100) + self.stkp)
-        self.stkp += 1
-        self.pc |= u16((self.read(0x0100) + self.stkp) << 8)
-        self.pc += 1
+        self.stkp = u8(self.stkp + 1)
+        self.pc = self.read(0x0100 + self.stkp)
+        self.stkp = u8(self.stkp + 1)
+        self.pc |= self.read(0x0100 + self.stkp) << 8
+        self.pc = u16(self.pc + 1)
         return 0
 
     def SEC(self) -> int:
@@ -559,7 +559,7 @@ class CPU(Device):
         return 0
 
     def SEI(self) -> int:
-        self.setFlag("I", True)
+        self.setFlag('I', True)
         return 0
 
     def STA(self) -> int:
@@ -614,36 +614,36 @@ class CPU(Device):
     def irq(self) -> None:
         if self.getFlag('I') == 0:
             self.write(0x0100 + self.stkp, (self.pc >> 8) & 0x00FF)
-            self.stkp -= 1
+            self.stkp = u8(self.stkp - 1)
             self.write(0x0100 + self.stkp, self.pc & 0x00FF)
-            self.stkp -= 1
+            self.stkp = u8(self.stkp - 1)
             self.setFlag('B', 0)
             self.setFlag('U', 1)
             self.setFlag('I', 1)
             self.write(0x0100 + self.stkp, self.status)
-            self.stkp -= 1
+            self.stkp = u8(self.stkp - 1)
             self.addr_abs = 0xFFFE
             lo = self.read(self.addr_abs + 0)
             hi = self.read(self.addr_abs + 1)
-            self.pc = (u16(hi << 8)) | lo
+            self.pc = (hi << 8) | lo
             self.cycles = 7
 
     def nmi(self) -> None:
         self.write(0x0100 + self.stkp, (self.pc >> 8) & 0x00FF)
-        self.stkp -= 1
+        self.stkp = u8(self.stkp - 1)
         self.write(0x0100 + self.stkp, self.pc & 0x00FF)
-        self.stkp -= 1
+        self.stkp = u8(self.stkp - 1)
 
         self.setFlag('B', 0)
         self.setFlag('U', 1)
         self.setFlag('I', 1)
         self.write(0x0100 + self.stkp, self.status)
-        self.stkp -= 1
+        self.stkp = u8(self.stkp - 1)
 
         self.addr_abs = 0xFFFA
         lo = self.read(self.addr_abs + 0)
         hi = self.read(self.addr_abs + 1)
-        self.pc = (u16(hi << 8)) | lo
+        self.pc = u16(hi << 8) | lo
 
         self.cycles = 8
 

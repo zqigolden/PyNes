@@ -1,11 +1,11 @@
 from loguru import logger
 from pynes.bits import assert_u16
 from easydict import EasyDict
-from pynes.bits import uint8, uint16, u8, u16, t8, t16, mtx
+from pynes.bits import uint8, uint16, u8, u16, t8, t16, mtx, flipbyte
 from pynes.device import Device
 from pynes.cartridge import Cartridge, VERTICAL, HORIZONTAL
 from pynes.engine import Engine
-
+exit_flag = 0
 palScreen = [None] * 0x40
 palScreen[0x00] = (84, 84, 84)
 palScreen[0x01] = (0, 30, 116)
@@ -109,12 +109,19 @@ CONTROL_FLAG = EasyDict(
 )
 
 LOOPY_FLAG = EasyDict(
-    coarse_x = 0x11111,
-    coarse_y = 0x11111 << 5,
+    coarse_x = 0b11111,
+    coarse_y = 0b11111 << 5,
     nametable_x = 1 << 10,
     nametable_y = 1 << 11,
-    fine_y = 0x111 << 12,
+    fine_y = 0b111 << 12,
     unused = 1 << 15,
+)
+
+OAM_L = EasyDict(
+    y = 0,
+    id = 1,
+    attribute = 2,
+    x = 3,
 )
 
 def set_flag(reg, reg2, flag):
@@ -130,7 +137,6 @@ class PPU(Device):
         self.tblName = mtx(0, (2, 1024))
         self.tblPattern = mtx(0, (2, 4096))
         self.tblPalette = mtx(size=32)
-        self.tblPalette = list(range(32))
 
         self.palScreen = palScreen
         self.sprScreen = mtx(0, (256, 240, 3))
@@ -138,6 +144,7 @@ class PPU(Device):
         self.sprPatternTable = mtx(0, (2, 128, 128, 3))
         self.frame_complete = False
         self.scanline = 0
+        self.n_frame = 1
         self.cycle = 0
         self.cartridge:Cartridge = None
         self.engine = Engine()
@@ -158,49 +165,68 @@ class PPU(Device):
         self.bg_shifter_attrib_lo = u16()
         self.bg_shifter_attrib_hi = u16()
         self.nmi = False
+        self.OAM = mtx(0, (64, 4))
+        self.spriteScanline = mtx(0, (8, 4))
+        self.sprite_count = 0
+        self.sprite_shifter_pattern_lo = [0] * 8
+        self.sprite_shifter_pattern_hi = [0] * 8
+        self.bSpriteZeroHitPossible = False
+        self.bSpriteZeroBeingRendered = False
+        self.odd_frame = False
 
     def read(self, addr: t16) -> t8:
         assert_u16(addr)
         data = 0x0
         if addr == 0x0002:
             data = (self.status & 0xE0) | (self.ppu_data_buffer & 0x1F)
-            self.status &= u8(~STATUS_FLAG.vertical_blank)
+            self.status &= ~STATUS_FLAG.vertical_blank
             self.address_latch = 0
-        if addr == 0x0007:
+        elif addr == 0x0004:
+            data = self.OAM[self.oam_addr // 4][self.oam_addr % 4]
+        elif addr == 0x0007:
             data = self.ppu_data_buffer
             self.ppu_data_buffer = self.ppuRead(self.vram_addr)
             if self.vram_addr >= 0x3F00:
                 data = self.ppu_data_buffer
             self.vram_addr += (32 if self.control & CONTROL_FLAG.increment_mode else 1)
+        else:
+            pass
+            #logger.warning('read {} at {}', data, addr)
         return data
     
     def write(self, addr: t16, data: t8) -> None:
         assert_u16(addr)
         if addr == 0x0000:
             self.control = data
-            set_flag(self.tram_addr, self.control, CONTROL_FLAG.nametable_x | CONTROL_FLAG.nametable_Y)
-        if addr == 0x0001:
+            self.tram_addr = set_flag(self.tram_addr, self.control << 10, LOOPY_FLAG.nametable_x | LOOPY_FLAG.nametable_y)
+        elif addr == 0x0001:
             self.mask = data
-        if addr == 0x0005:
+        elif addr == 0x0002:
+            pass
+        elif addr == 0x0003:
+            self.oam_addr = data
+        elif addr == 0x0004:
+            self.OAM[self.oam_addr // 4][self.oam_addr % 4] = data
+        elif addr == 0x0005:
             if self.address_latch == 0:
                 self.fine_x = data & 0x07
-                set_flag(self.tram_addr, data >> 3, LOOPY_FLAG.coarse_x)
+                self.tram_addr = set_flag(self.tram_addr, data >> 3, LOOPY_FLAG.coarse_x)
                 self.address_latch = 1
             else:
-                set_flag(self.tram_addr, u16(data) & 0x07 << 12, LOOPY_FLAG.fine_y)
-                set_flag(self.tram_addr, u16(data) >> 3 << 5, LOOPY_FLAG.coarse_y)
+                self.tram_addr = set_flag(self.tram_addr, (data & 0x07) << 12, LOOPY_FLAG.fine_y)
+                self.tram_addr = set_flag(self.tram_addr, (data >> 3) << 5, LOOPY_FLAG.coarse_y)
                 self.address_latch = 0
-        if addr == 0x0006:
+        elif addr == 0x0006:
             if self.address_latch == 0:
-                self.tram_addr = (u16(data) & 0x3F) << 8 | self.tram_addr & 0x00FF
+                self.tram_addr = ((data & 0x3F) << 8) | (self.tram_addr & 0x00FF)
                 self.address_latch = 1
             else:
                 self.tram_addr = (self.tram_addr & 0xFF00) | data
                 self.vram_addr = self.tram_addr
                 self.address_latch = 0
-        if addr == 0x0007:
+        elif addr == 0x0007:
             self.ppuWrite(self.vram_addr, data)
-            self.vram_addr += 32 if self.control & CONTROL_FLAG.increment_mode else 1
+            self.vram_addr += (32 if self.control & CONTROL_FLAG.increment_mode else 1)
 
     def ppuRead(self, addr: t16) -> t8:
         assert_u16(addr)
@@ -230,7 +256,7 @@ class PPU(Device):
                     data = self.tblName[1][addr & 0x03FF]
                 if 0x0C00 <= addr <= 0x0FFF:
                     data = self.tblName[1][addr & 0x03FF]
-        elif 0x3F00 < addr < 0x3FFF:
+        elif 0x3F00 <= addr <= 0x3FFF:
             addr &= 0x001F
             if addr == 0x0010: addr = 0x0000
             if addr == 0x0014: addr = 0x0004
@@ -276,6 +302,7 @@ class PPU(Device):
             self.tblPalette[addr] = data
         return data
 
+
     def ConnectCartridge(self, cartridge:Cartridge) -> None:
         self.cartridge = cartridge
 
@@ -283,20 +310,20 @@ class PPU(Device):
     def IncrementScrollX(self):
         if self.mask & (MASK_FLAG.render_background | MASK_FLAG.render_sprites):
             if self.vram_addr & LOOPY_FLAG.coarse_x == 31:
-                set_flag(self.vram_addr, 0, LOOPY_FLAG.coarse_x)
-                set_flag(self.vram_addr, ~self.vram_addr, LOOPY_FLAG.nametable_x)
+                self.vram_addr = set_flag(self.vram_addr, 0, LOOPY_FLAG.coarse_x)
+                self.vram_addr = set_flag(self.vram_addr, ~self.vram_addr, LOOPY_FLAG.nametable_x)
             else:
-                self.vram_addr += 1
+                self.vram_addr = set_flag(self.vram_addr, self.vram_addr + 1, LOOPY_FLAG.coarse_x)
     
     def IncrementScrollY(self):
         if self.mask & (MASK_FLAG.render_background | MASK_FLAG.render_sprites):
-            if self.vram_addr & LOOPY_FLAG.fine_y  < 7 << 12:
+            if self.vram_addr & LOOPY_FLAG.fine_y < 7 << 12:
                 self.vram_addr += 1<<12
             else:
                 self.vram_addr &= ~LOOPY_FLAG.fine_y
                 if self.vram_addr & LOOPY_FLAG.coarse_y == 29 << 5:
                     self.vram_addr &= ~LOOPY_FLAG.coarse_y
-                    set_flag(self.vram_addr, ~self.vram_addr, LOOPY_FLAG.nametable_y)
+                    self.vram_addr = set_flag(self.vram_addr, ~self.vram_addr, LOOPY_FLAG.nametable_y)
                 elif self.vram_addr & LOOPY_FLAG.coarse_y == 31 << 5:
                     self.vram_addr &= ~LOOPY_FLAG.coarse_y
                 else:
@@ -304,12 +331,12 @@ class PPU(Device):
     
     def TransferAddressX(self):
         if self.mask & (MASK_FLAG.render_background | MASK_FLAG.render_sprites):
-            set_flag(self.vram_addr, self.tram_addr, LOOPY_FLAG.nametable_x | LOOPY_FLAG.coarse_x)
+            self.vram_addr = set_flag(self.vram_addr, self.tram_addr, LOOPY_FLAG.nametable_x | LOOPY_FLAG.coarse_x)
 
     def TransferAddressY(self):
         if self.mask & (MASK_FLAG.render_background | MASK_FLAG.render_sprites):
-            set_flag(self.vram_addr, self.tram_addr, 
-                LOOPY_FLAG.nametable_y | LOOPY_FLAG.coarse_y, LOOPY_FLAG.fine_y)
+            self.vram_addr = set_flag(self.vram_addr, self.tram_addr, 
+                LOOPY_FLAG.nametable_y | LOOPY_FLAG.coarse_y | LOOPY_FLAG.fine_y)
     
     def LoadBackgroundShifters(self):
         self.bg_shifter_pattern_lo = (self.bg_shifter_pattern_lo & 0xFF00) | self.bg_next_tile_lsb
@@ -319,47 +346,55 @@ class PPU(Device):
 
     def UpdateShifters(self):
         if self.mask & MASK_FLAG.render_background:
-            self.bg_shifter_pattern_lo <<= 1
-            self.bg_shifter_pattern_hi <<= 1
-            self.bg_shifter_attrib_lo <<= 1
-            self.bg_shifter_attrib_hi <<= 1
+            self.bg_shifter_pattern_lo = u16(self.bg_shifter_pattern_lo << 1)
+            self.bg_shifter_pattern_hi = u16(self.bg_shifter_pattern_hi << 1)
+            self.bg_shifter_attrib_lo = u16(self.bg_shifter_attrib_lo << 1)
+            self.bg_shifter_attrib_hi = u16(self.bg_shifter_attrib_hi << 1)
+        if self.mask & MASK_FLAG.render_sprites and 1 <= self.cycle < 258:
+            for i in range(self.sprite_count):
+                if self.spriteScanline[i][OAM_L.x] > 0:
+                    self.spriteScanline[i][OAM_L.x] -= 1
+                else:
+                    self.sprite_shifter_pattern_lo[i] = u8(self.sprite_shifter_pattern_lo[i] << 1)
+                    self.sprite_shifter_pattern_hi[i] = u8(self.sprite_shifter_pattern_hi[i] << 1)
 
     def clock(self) -> None:
-
         if self.scanline >= -1 and self.scanline < 240:
-            if self.scanline == 0 and self.cycle == 0:
+            if self.scanline == 0 and self.cycle == 0 and self.odd_frame and (self.mask & (MASK_FLAG.render_background | MASK_FLAG.render_sprites)):
                 self.cycle = 1
             if self.scanline == -1 and self.cycle == 1:
-                self.status &= u8(~STATUS_FLAG.vertical_blank)
+                self.status &= ~(STATUS_FLAG.vertical_blank | STATUS_FLAG.sprite_overflow | STATUS_FLAG.sprite_zero_hit)
+                self.sprite_shifter_pattern_lo = [0] * 8
+                self.sprite_shifter_pattern_hi = [0] * 8
             if (self.cycle >= 2 and self.cycle < 258) or (self.cycle >= 321 and self.cycle < 338):
                 self.UpdateShifters()
-
-                if (self.cycle - 1) & 3 == 0:
+                switch = (self.cycle - 1) % 8
+                if switch == 0:
                     self.LoadBackgroundShifters()
                     self.bg_next_tile_id = self.ppuRead(0x2000 | (self.vram_addr & 0x0FFF))
-                elif (self.cycle - 1) & 3 == 2:
+                elif switch == 2:
                     self.bg_next_tile_attrib = self.ppuRead(0x23C0
                         | (self.vram_addr & (LOOPY_FLAG.nametable_y | LOOPY_FLAG.nametable_x))
-                        | ((self.vram_addr & LOOPY_FLAG.coarse_y) >> 7) << 3 
+                        | (((self.vram_addr & LOOPY_FLAG.coarse_y) >> 7) << 3)
                         | (self.vram_addr & LOOPY_FLAG.coarse_x) >> 2)
                     
-                    if self.vram_addr & 0x02 << 5:
+                    if self.vram_addr & (0x02 << 5):
                         self.bg_next_tile_attrib >>= 4
                     if self.vram_addr & 0x02:
                         self.bg_next_tile_attrib >>= 2
                     self.bg_next_tile_attrib &= 0x03
 
-                elif (self.cycle - 1) & 3 == 4:
-                    self.bg_next_tile_lsb = self.ppuRead((self.control & CONTROL_FLAG.pattern_background << 8) 
-                        + (u16(self.bg_next_tile_id) << 4) 
-                        + (self.vram_addr & LOOPY_FLAG.fine_y) >> 12)
+                elif switch == 4:
+                    self.bg_next_tile_lsb = self.ppuRead(((self.control & CONTROL_FLAG.pattern_background) << 8) 
+                        + (self.bg_next_tile_id << 4)
+                        + ((self.vram_addr & LOOPY_FLAG.fine_y) >> 12))
 
-                elif (self.cycle - 1) & 3 == 6:
-                    self.bg_next_tile_msb = self.ppuRead((self.control & CONTROL_FLAG.pattern_background << 8) 
-                        + (u16(self.bg_next_tile_id) << 4) 
+                elif switch == 6:
+                    self.bg_next_tile_msb = self.ppuRead(((self.control & CONTROL_FLAG.pattern_background) << 8) 
+                        + (self.bg_next_tile_id << 4)
                         + ((self.vram_addr & LOOPY_FLAG.fine_y) >> 12) + 8)
 
-                elif (self.cycle - 1) & 3 == 7:
+                elif switch == 7:
                     self.IncrementScrollX()
 
             if self.cycle == 256:
@@ -374,7 +409,65 @@ class PPU(Device):
 
             if self.scanline == -1 and self.cycle >= 280 and self.cycle < 305:
                 self.TransferAddressY()
-
+        if self.cycle == 257 and self.scanline >= 0:
+            self.spriteScanline = mtx(255, (8, 4))
+            self.sprite_count = 0
+            self.sprite_shifter_pattern_lo = mtx(0, 8)
+            self.sprite_shifter_pattern_hi = mtx(0, 8)
+            nOAMEntry = 0
+            self.bSpriteZeroHitPossible = False
+            while nOAMEntry < 64 and self.sprite_count < 9:
+                diff = self.scanline - self.OAM[nOAMEntry][OAM_L.y]
+                if diff >= 0 and diff < (16 if self.control & CONTROL_FLAG.sprite_size else 8) and self.sprite_count < 8:
+                    if self.sprite_count < 8:
+                        if nOAMEntry == 0:
+                            self.bSpriteZeroHitPossible = True
+                        self.spriteScanline[self.sprite_count] = self.OAM[nOAMEntry][:]
+                    self.sprite_count += 1
+                nOAMEntry += 1
+            self.status = set_flag(self.status, int(self.sprite_count > 8) * STATUS_FLAG.sprite_overflow, STATUS_FLAG.sprite_overflow)
+        if self.cycle == 340:
+            for i in range(self.sprite_count):
+                if not (self.control & CONTROL_FLAG.sprite_size):
+                    if not (self.spriteScanline[i][OAM_L.attribute] & 0x80):
+                        sprite_pattern_addr_lo = u16(((self.control & CONTROL_FLAG.pattern_sprite) << 9) | 
+                            (self.spriteScanline[i][OAM_L.id] << 4) | 
+                            (self.scanline - self.spriteScanline[i][OAM_L.y]))
+                    else:
+                        sprite_pattern_addr_lo = u16(((self.control & CONTROL_FLAG.pattern_sprite) << 9) | 
+                            (self.spriteScanline[i][OAM_L.id] << 4) | 
+                            (7 - (self.scanline - self.spriteScanline[i][OAM_L.y])))
+                else:
+                    if not (self.spriteScanline[i][OAM_L.attribute] & 0x80):
+                        if self.scanline - self.spriteScanline[i][OAM_L.y] < 8:
+                            sprite_pattern_addr_lo = u16(
+                                ((self.spriteScanline[i][OAM_L.id] & 0x01) << 12) | 
+                                ((self.spriteScanline[i][OAM_L.id] & 0xFE) << 4) | 
+                                ((self.scanline - self.spriteScanline[i][OAM_L.y]) & 0x07))
+                        else:
+                            sprite_pattern_addr_lo = u16(
+                                ((self.spriteScanline[i][OAM_L.id] & 0x01) << 12) | 
+                                (((self.spriteScanline[i][OAM_L.id] & 0xFE) + 1) << 4) | 
+                                ((self.scanline - self.spriteScanline[i][OAM_L.y]) & 0x07))
+                    else:
+                        if self.scanline - self.spriteScanline[i][OAM_L.y] < 8:
+                            sprite_pattern_addr_lo = u16(
+                                ((self.spriteScanline[i][OAM_L.id] & 0x01) << 12) | 
+                                (((self.spriteScanline[i][OAM_L.id] & 0xFE) + 1) << 4) | 
+                                ((7 - (self.scanline - self.spriteScanline[i][OAM_L.y])) & 0x07))
+                        else:
+                            sprite_pattern_addr_lo = u16(
+                                ((self.spriteScanline[i][OAM_L.id] & 0x01) << 12) | 
+                                ((self.spriteScanline[i][OAM_L.id] & 0xFE) << 4) | 
+                                ((7 - (self.scanline - self.spriteScanline[i][OAM_L.y])) & 0x07))
+                sprite_pattern_addr_hi = u16(sprite_pattern_addr_lo + 8)
+                sprite_pattern_bits_lo = self.ppuRead(sprite_pattern_addr_lo)
+                sprite_pattern_bits_hi = self.ppuRead(sprite_pattern_addr_hi)
+                if self.spriteScanline[i][OAM_L.attribute] & 0x40:
+                    sprite_pattern_bits_lo = flipbyte(sprite_pattern_bits_lo)
+                    sprite_pattern_bits_hi = flipbyte(sprite_pattern_bits_hi)
+                self.sprite_shifter_pattern_lo[i] = sprite_pattern_bits_lo
+                self.sprite_shifter_pattern_hi[i] = sprite_pattern_bits_hi
         if self.scanline == 240:
             pass
 
@@ -384,26 +477,82 @@ class PPU(Device):
                 if self.control & CONTROL_FLAG.enable_nmi:
                     self.nmi = True
 
-        bg_pixel = u8(0x00)
-        bg_palette = u8(0x00)
+        bg_pixel = 0
+        bg_palette = 0
         if self.mask & MASK_FLAG.render_background:
-            bit_mux = u16(0x8000) >> self.fine_x
-            p0_pixel = (self.bg_shifter_pattern_lo & bit_mux) > 0
-            p1_pixel = (self.bg_shifter_pattern_hi & bit_mux) > 0
-            bg_pixel = (p1_pixel << 1) | p0_pixel
-            bg_pal0 = (self.bg_shifter_attrib_lo & bit_mux) > 0
-            bg_pal1 = (self.bg_shifter_attrib_hi & bit_mux) > 0
-            bg_palette = (bg_pal1 << 1) | bg_pal0
-        self.engine.set_pixel(self.cycle - 1, self.scanline, self.GetColourFromPaletteRam(bg_palette, bg_pixel))
+            if (self.mask & MASK_FLAG.render_background_left) or (self.cycle >= 9):
+                bit_mux = 0x8000 >> self.fine_x
+                p0_pixel = int((self.bg_shifter_pattern_lo & bit_mux) > 0)
+                p1_pixel = int((self.bg_shifter_pattern_hi & bit_mux) > 0)
+                bg_pixel = (p1_pixel << 1) | p0_pixel
+                bg_pal0 = int((self.bg_shifter_attrib_lo & bit_mux) > 0)
+                bg_pal1 = int((self.bg_shifter_attrib_hi & bit_mux) > 0)
+                bg_palette = (bg_pal1 << 1) | bg_pal0
+
+        fg_pixel = 0x00
+        fg_palette = 0x00
+        fg_priority = 0x00
+        if self.mask & MASK_FLAG.render_sprites:
+            if (self.mask & MASK_FLAG.render_sprites_left) or (self.cycle >= 9):
+                self.bSpriteZeroBeingRendered = False
+                for i in range(self.sprite_count):
+                    if self.spriteScanline[i][OAM_L.x] == 0:
+                        fg_pixel_lo = (self.sprite_shifter_pattern_lo[i] & 0x80) > 0
+                        fg_pixel_hi = (self.sprite_shifter_pattern_hi[i] & 0x80) > 0
+                        fg_pixel = (fg_pixel_hi << 1) | fg_pixel_lo
+
+                        fg_palette = (self.spriteScanline[i][OAM_L.attribute] & 0x03) + 0x04
+                        fg_priority = int((self.spriteScanline[i][OAM_L.attribute] & 0x20) == 0)
+
+                        if fg_pixel != 0:
+                            if i == 0:
+                                self.bSpriteZeroBeingRendered = True
+                            break
+        pixel = 0
+        palette = 0
+        if bg_pixel == 0 and fg_pixel == 0:
+            pixel = 0x00
+            palette = 0x00
+        elif bg_pixel == 0 and fg_pixel > 0:
+            pixel = fg_pixel
+            palette = fg_palette
+        elif bg_pixel > 0 and fg_pixel == 0:
+            pixel = bg_pixel
+            palette = bg_palette
+        elif bg_pixel > 0 and fg_pixel > 0:
+            if fg_priority:
+                pixel = fg_pixel
+                palette = fg_palette
+            else:
+                pixel = bg_pixel
+                palette = bg_palette
+            if self.bSpriteZeroHitPossible and self.bSpriteZeroBeingRendered:
+                if self.mask & MASK_FLAG.render_background and self.mask & MASK_FLAG.render_sprites:
+                    if not (self.mask & MASK_FLAG.render_background_left | self.mask & MASK_FLAG.render_sprites_left):
+                        if self.cycle >= 9 and self.cycle < 258:
+                            self.status |= STATUS_FLAG.sprite_zero_hit
+                    else:
+                        if self.cycle >= 1 and self.cycle < 258:
+                            self.status |= STATUS_FLAG.sprite_zero_hit
+        # if bg_palette > 0 or bg_pixel > 0:
+        #     print(f'x={self.cycle - 1}, y={self.scanline}, palette={palette}, pixel={pixel}')
+        self.engine.set_pixel(self.cycle - 1, self.scanline, self.GetColourFromPaletteRam(palette, pixel))
 
         self.cycle += 1
+
+        if (self.mask & (MASK_FLAG.render_background | MASK_FLAG.render_sprites)):
+            if self.cycle == 260 and self.scanline < 240:
+                self.cartridge.mapper.scanline()
+
         if self.cycle >= 341:
             self.cycle = 0
             self.scanline += 1
             if self.scanline >= 261:
                 self.engine.update()
                 self.scanline = -1
+                self.n_frame += 1
                 self.frame_complete = True
+                self.odd_frame = not self.odd_frame
 
     def GetPatternTable(self, i:int, palette:int) -> int:
         for nTileY in range(16):
