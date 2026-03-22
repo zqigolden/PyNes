@@ -14,6 +14,11 @@ logger.add(sys.stderr, level="INFO")
 
 @logger.catch
 def main(debug:int=typer.Option(-1, '-d', '--debug')):
+    """
+    Main entrypoint of the NES Simulator. It initializes the core system components (Bus, CPU, PPU),
+    connects the game cartridge, and starts the infinite loop to run system clock cycles until
+    the user quits the Pygame window.
+    """
 
     bus = Bus()
     bus.connect(CPU())

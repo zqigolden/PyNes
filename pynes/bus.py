@@ -11,6 +11,11 @@ import loguru
 
 
 class Bus(Device):
+    """
+    The Bus represents the central communication hub of the NES.
+    It connects the CPU, PPU, APU, Controllers, and Cartridge together
+    by mapping their registers and internal RAM into a single 16-bit address space.
+    """
     def __init__(self, address_count: int = 16, data_count: int = 8, name: str = '') -> None:
         super().__init__(name=name)
         self.address_count = address_count
@@ -98,6 +103,11 @@ class Bus(Device):
 
 
     def clock(self) -> None:
+        """
+        Steps the system simulation forward by one clock cycle.
+        The PPU runs 3 times as fast as the CPU. The Bus ensures that the CPU
+        only ticks once every 3 system clock cycles. It also handles DMA transfers.
+        """
         self.ppu.clock()
         if self.nSystemClockCounter % 3 == 0:
             if self.dma_transfer:

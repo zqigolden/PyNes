@@ -42,6 +42,12 @@ CYCLES = 3
 
 
 class CPU(Device):
+    """
+    Emulates the Ricoh 2A03 processor (a variant of the MOS Technology 6502).
+    It manages fetching, decoding, and executing instructions from memory, and interacts
+    with internal registers: Accumulator (A), X Index (X), Y Index (Y), Program Counter (PC),
+    Stack Pointer (SP), and Status Flags.
+    """
     def __init__(self, debug: bool = False, name: str = '') -> None:
         super().__init__(name=name)
 
@@ -648,6 +654,12 @@ class CPU(Device):
         self.cycles = 8
 
     def clock(self) -> None:
+        """
+        Executes a single cycle of the CPU. If the CPU is not currently waiting out
+        cycles for a previously fetched instruction, it fetches the next opcode at the
+        Program Counter, decodes the addressing mode, executes the operation, and calculates
+        the additional cycles consumed.
+        """
         if self.cycles == 0:
             self.optcode = self.read(self.pc)
             self.setFlag('U', True)
