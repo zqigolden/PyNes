@@ -1,1 +1,5 @@
 bitarray
+typer
+loguru
+pygame
+easydict

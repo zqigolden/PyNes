@@ -131,6 +131,11 @@ def set_flag(reg, reg2, flag):
     return reg
 
 class PPU(Device):
+    """
+    Emulates the Ricoh 2C02 Picture Processing Unit (PPU).
+    It maintains its own memory space (VRAM, OAM, Palettes) separate from the CPU
+    and handles generating the 256x240 pixel screen output, refreshing once per frame.
+    """
     def __init__(self, name: str=None) -> None:
         super().__init__(name=name)
 
@@ -359,6 +364,12 @@ class PPU(Device):
                     self.sprite_shifter_pattern_hi[i] = u8(self.sprite_shifter_pattern_hi[i] << 1)
 
     def clock(self) -> None:
+        """
+        Executes a single clock tick for the PPU. Because the PPU is tied intimately
+        to the NTSC television signal standard, the screen generation is driven by
+        calculating positions of scanlines and dots (cycles). When reaching the end
+        of a frame, it signals VBLANK and triggers NMI to the CPU if enabled.
+        """
         if self.scanline >= -1 and self.scanline < 240:
             if self.scanline == 0 and self.cycle == 0 and self.odd_frame and (self.mask & (MASK_FLAG.render_background | MASK_FLAG.render_sprites)):
                 self.cycle = 1
