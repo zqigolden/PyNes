@@ -23,6 +23,14 @@ class Engine:
             self.finished = True
             pygame.quit()
 
+    def get_keys(self):
+        # We need to process events so that key.get_pressed() updates correctly
+        # if there's any pending events not caught by update() yet.
+        pygame.event.pump()
+        if not self.running:
+            return {}
+        return pygame.key.get_pressed()
+
 if __name__ == '__main__':
     e = Engine()
     for i in range(10000):
