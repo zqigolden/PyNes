@@ -212,7 +212,7 @@ class CPU(Device):
         self.temp = u16(self.a) + val + self.getFlag('C')
         self.setFlag('C', self.temp > 255)
         self.setFlag('Z', self.temp & 0x00FF == 0)
-        self.setFlag('V', (~(self.a ^ self.fetched) &
+        self.setFlag('V', (~(self.a ^ val) &
                     (self.a ^ self.temp)) & 0x0080)
         self.setFlag('N', self.temp & 0x80)
         self.a = u8(self.temp)
@@ -490,7 +490,6 @@ class CPU(Device):
     def PHP(self) -> int:
         self.write(0x0100 + self.stkp, self.status | FLAGS6502.B | FLAGS6502.U)
         self.setFlag("B", 0)
-        self.setFlag("U", 0)
         self.stkp = u8(self.stkp - 1)
         return 0
 
@@ -505,6 +504,7 @@ class CPU(Device):
         self.stkp = u8(self.stkp + 1)
         self.status = self.read(0x0100 + self.stkp)
         self.setFlag("U", 1)
+        self.setFlag("B", 0)
         return 0
 
     def ROL(self) -> int:
@@ -535,7 +535,7 @@ class CPU(Device):
         self.stkp = u8(self.stkp + 1)
         self.status = self.read(0x0100 + self.stkp)
         self.status &= ~FLAGS6502.B
-        self.status &= ~FLAGS6502.U
+        self.status |= FLAGS6502.U
         self.stkp = u8(self.stkp + 1)
         self.pc = self.read(0x0100 + self.stkp)
         self.stkp = u8(self.stkp + 1)
